@@ -65,7 +65,7 @@ services:
 
   api:
     build:
-      context: ../apps/api
+      context: ..
       dockerfile: Dockerfile
     container_name: pemira_api
     restart: unless-stopped
@@ -94,7 +94,7 @@ services:
 
   worker:
     build:
-      context: ../apps/api
+      context: ..
       dockerfile: Dockerfile
     container_name: pemira_ballot_worker
     restart: unless-stopped
@@ -114,20 +114,6 @@ services:
     networks:
       - pemira_net
 
-  web:
-    build:
-      context: ../apps/web
-      dockerfile: Dockerfile
-    container_name: pemira_web
-    restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:80/api
-      NEXT_PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
-    ports:
-      - "3000:3000"
-    networks:
-      - pemira_net
-
   nginx:
     image: nginx:1.25-alpine
     container_name: pemira_nginx
@@ -139,7 +125,6 @@ services:
       - "443:443"
     depends_on:
       - api
-      - web
     networks:
       - pemira_net
 
