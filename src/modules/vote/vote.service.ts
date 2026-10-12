@@ -30,7 +30,7 @@ export class VoteService {
     const lockKey = `lock:vote:voter:${req.voterId}`;
 
     // 1. Terapkan Distributed Lock (SETNX) selama 60 detik
-    const lockAcquired = await redis.set(lockKey, '1', 'NX', 'EX', 60);
+    const lockAcquired = await redis.set(lockKey, '1', 'EX', 60, 'NX');
     if (!lockAcquired) {
       throw new Error('DUPLICATE_REQUEST: Permintaan voting sedang diproses atau hak suara telah dipakai.');
     }
