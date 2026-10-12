@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://pemira-kemahasiswaan.pnj.ac.id/sitemap.xml
