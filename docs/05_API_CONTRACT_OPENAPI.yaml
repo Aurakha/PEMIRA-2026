@@ -1,0 +1,405 @@
+openapi: 3.0.3
+info:
+  title: API E-Voting PEMIRA Kampus 2026
+  description: Kontrak API Resmi untuk Sistem Pemilihan Umum Raya Mahasiswa (PEMIRA) 2026 berkinerja tinggi dan berintegritas kriptografis (Zero Linkability).
+  version: 1.0.0
+  contact:
+    name: Divisi IT & Keamanan Siber KPU Pemira 2026
+servers:
+  - url: http://localhost:4000
+    description: Server Development Lokal
+  - url: https://pemira.kampus.ac.id/api
+    description: Server Produksi Resmi
+
+tags:
+  - name: Utilitas & Waktu
+    description: Status kesehatan dan sinkronisasi jam atomik server
+  - name: Autentikasi
+    description: SSO Google Workspace, DPT Matching, dan Manajemen Sesi
+  - name: Bilik Suara
+    description: Pengambilan profil paslon dan pengiriman surat suara digital
+  - name: Panel Saksi & Admin
+    description: Rekapitulasi suara terkarantina (Dual-Control Quorum) dan manajemen DPT
+
+paths:
+  /health:
+    get:
+      tags:
+        - Utilitas & Waktu
+      summary: Health Check Status Server
+      responses:
+        '200':
+          description: Server berjalan normal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+                  timestamp:
+                    type: string
+                    format: date-time
+                  uptime:
+                    type: number
+                    example: 3600.5
+
+  /api/time:
+    get:
+      tags:
+        - Utilitas & Waktu
+      summary: Sinkronisasi Waktu Server
+      description: Menyediakan jam server terakreditasi untuk presisi countdown bilik suara di peramban pemilih.
+      responses:
+        '200':
+          description: Waktu resmi server berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currentTime:
+                    type: string
+                    format: date-time
+                  timestamp:
+                    type: integer
+                    example: 1728738900000
+                  timezone:
+                    type: string
+                    example: Asia/Jakarta
+
+  /api/auth/login-sso:
+    post:
+      tags:
+        - Autentikasi
+      summary: Login SSO Google Workspace & Pencocokan DPT
+      description: Memvalidasi Google ID Token, memeriksa domain kampus, mencocokkan DPT, dan menginvaliasi sesi lama di perangkat lain.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - idToken
+              properties:
+                idToken:
+                  type: string
+                  description: Google ID Token atau format mock untuk development (mock-token:email)
+                  example: mock-token:pemilih1@mahasiswa.ac.id
+      responses:
+        '200':
+          description: Autentikasi berhasil, token JWT diterbitkan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '400':
+          description: Request body tidak valid
+        '401':
+          description: Verifikasi Google ID Token gagal
+        '403':
+          description: Domain email ditolak atau mahasiswa tidak terdaftar di DPT
+
+  /api/auth/me:
+    get:
+      tags:
+        - Autentikasi
+      summary: Profil Pemilih & Status Hak Suara Saat Ini
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Data profil pemilih aktif
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  voter:
+                    $ref: '#/components/schemas/VoterProfile'
+        '401':
+          description: Token kedaluwarsa atau sesi telah ditimpa di perangkat lain
+
+  /api/auth/logout:
+    post:
+      tags:
+        - Autentikasi
+      summary: Logout & Terminasi Sesi Redis
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Sesi berhasil dihapus dari Redis
+
+  /api/vote/candidates:
+    get:
+      tags:
+        - Bilik Suara
+      summary: Ambil Daftar Kategori & Paslon Pemilihan
+      description: Dilayani langsung dari cache Redis memori tinggi untuk menahan ribuan request serentak.
+      responses:
+        '200':
+          description: Daftar paslon aktif berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  election:
+                    type: object
+                  categories:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CategoryWithCandidates'
+
+  /api/vote/submit:
+    post:
+      tags:
+        - Bilik Suara
+      summary: Submit Pilihan Surat Suara (Zero Linkability & Atomic)
+      description: Memotong race condition dengan Redis SETNX, mengupdate DPT has_voted=TRUE, dan memasukkan pilihan ke antrean BullMQ tanpa identitas pemilih.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitVoteRequest'
+      responses:
+        '202':
+          description: Suara berhasil diterima antrean digital & token tanda terima diterbitkan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitVoteSuccessResponse'
+        '400':
+          description: Format payload voting tidak valid
+        '401':
+          description: Sesi tidak sah atau login di perangkat lain
+        '403':
+          description: Jam pemilihan telah ditutup atau verifikasi Turnstile bot gagal
+        '409':
+          description: Hak suara telah digunakan sebelumnya (Double voting dicegah)
+
+  /api/admin/tally-results:
+    post:
+      tags:
+        - Panel Saksi & Admin
+      summary: Buka Hasil Rekapitulasi Suara (Dual-Control Quorum)
+      description: Hanya dapat dibuka setelah jam pemilu ditutup dan wajib menyertakan 2 kunci rahasia panitia KPU & Bawaslu.
+      parameters:
+        - in: header
+          name: x-kpu-secret-key
+          required: true
+          schema:
+            type: string
+          example: kpu-master-secret-2026
+        - in: header
+          name: x-bawaslu-secret-key
+          required: true
+          schema:
+            type: string
+          example: bawaslu-audit-secret-2026
+      responses:
+        '200':
+          description: Hasil perolehan suara terbuka
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TallyResultsResponse'
+        '401':
+          description: Otorisasi quorum gagal (satu atau kedua kunci salah)
+        '403':
+          description: Pemilihan masih aktif (Hasil dikarantina secara ketat)
+
+  /api/admin/users/not-voted:
+    get:
+      tags:
+        - Panel Saksi & Admin
+      summary: Audit DPT yang Belum Mencoblos
+      responses:
+        '200':
+          description: Daftar mahasiswa yang belum menggunakan hak suara
+
+  /api/admin/users/bulk-import:
+    post:
+      tags:
+        - Panel Saksi & Admin
+      summary: Bulk Import DPT Massal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                emails:
+                  type: array
+                  items:
+                    type: string
+                  example: ["andi.pratama.tik23@stu.pnj.ac.id", "bella.safitri.ak23@stu.pnj.ac.id"]
+      responses:
+        '200':
+          description: DPT berhasil diimpor dengan auto-resolve nama & jurusan
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    AuthSuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        token:
+          type: string
+        voter:
+          $ref: '#/components/schemas/VoterProfile'
+
+    VoterProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        nim:
+          type: string
+          example: '13523001'
+        fullName:
+          type: string
+          example: 'Andi Pratama'
+        email:
+          type: string
+          example: 'pemilih1@mahasiswa.ac.id'
+        studyProgram:
+          type: string
+          example: 'Teknik Informatika dan Komputer'
+        hasVoted:
+          type: boolean
+          example: false
+        receiptHash:
+          type: string
+          nullable: true
+
+    CategoryWithCandidates:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: 'Presiden & Wakil Presiden Mahasiswa'
+        max_selection:
+          type: integer
+          example: 1
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              candidate_number:
+                type: integer
+                example: 1
+              chairman_name:
+                type: string
+                example: 'Ahmad Fauzi'
+              vice_chairman_name:
+                type: string
+                nullable: true
+                example: 'Siti Rahma'
+              vision:
+                type: string
+              mission:
+                type: string
+              photo_url:
+                type: string
+
+    SubmitVoteRequest:
+      type: object
+      required:
+        - votes
+      properties:
+        turnstileToken:
+          type: string
+          example: 'mock-turnstile-token-dev'
+        votes:
+          type: array
+          items:
+            type: object
+            required:
+              - categoryId
+              - candidateId
+            properties:
+              categoryId:
+                type: string
+                format: uuid
+              candidateId:
+                type: string
+                format: uuid
+
+    SubmitVoteSuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        receiptToken:
+          type: string
+          example: 'VOTE-RCPT-A79B3E8C12F490214...'
+        message:
+          type: string
+          example: 'Suara Anda telah berhasil masuk ke kotak suara digital.'
+
+    TallyResultsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        election:
+          type: object
+          properties:
+            id:
+              type: string
+            title:
+              type: string
+            finalizedAt:
+              type: string
+              format: date-time
+        participation:
+          type: object
+          properties:
+            totalDpt:
+              type: integer
+              example: 8000
+            totalVoted:
+              type: integer
+              example: 5420
+            turnoutPercentage:
+              type: string
+              example: '67.75%'
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+              candidateNumber:
+                type: integer
+              candidateName:
+                type: string
+              votes:
+                type: integer
