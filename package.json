@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "worker:dev": "tsx watch src/worker.ts",
     "build": "tsc",
+    "test": "tsx src/test-check.ts",
     "start": "node dist/server.js",
     "worker": "node dist/worker.js"
   },
