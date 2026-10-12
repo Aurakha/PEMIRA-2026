@@ -26,6 +26,49 @@ export interface SessionInfo {
   token: string;
 }
 
+export interface ParsedEmailInfo {
+  name: string;
+  major: string;
+  year: number;
+}
+
+/**
+ * Otomatis mengekstrak nama, jurusan, dan tahun angkatan dari format email kampus resmi
+ * Contoh: muhammad.aurakha.tik23@stu.pnj.ac.id -> Name: 'Muhammad Aurakha', Major: 'Teknik Informatika dan Komputer', Year: 2023
+ * Diadaptasi dari sistem referensi pemira-back-end
+ */
+export function parseEmailInfo(email: string): ParsedEmailInfo | null {
+  const username = email.split('@')[0];
+  if (!username) return null;
+
+  const parts = username.split('.');
+  if (parts.length < 2) return null;
+
+  const majorWithYear = parts[parts.length - 1];
+  const match = majorWithYear.match(/^([a-zA-Z]+)(\d+)$/);
+  if (!match) return null;
+
+  const majorCode = match[1].toLowerCase();
+  const yearDigits = match[2];
+  const year = parseInt(`20${yearDigits}`, 10);
+
+  const majorMap: Record<string, string> = {
+    tik: 'Teknik Informatika dan Komputer',
+    ak: 'Akuntansi',
+    an: 'Administrasi Niaga',
+    ts: 'Teknik Sipil',
+    tm: 'Teknik Mesin',
+    te: 'Teknik Elektro',
+    tgp: 'Teknik Grafika dan Penerbitan',
+  };
+
+  const major = majorMap[majorCode] || 'Umum';
+  const nameParts = parts.slice(0, -1).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
+  const name = nameParts.join(' ');
+
+  return { name, major, year };
+}
+
 export class AuthService {
   private allowedDomains: string[];
 

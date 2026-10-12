@@ -52,12 +52,22 @@ export function buildServer(): FastifyInstance {
     }
   });
 
-  // 5. Health Check Endpoint
+  // 5. Health Check & Server Time Endpoints
   server.get('/health', async () => {
     return {
       status: 'UP',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
+    };
+  });
+
+  // Sinkronisasi Waktu Server untuk Countdown Presisi Frontend (Referensi pemira-back-end /time)
+  server.get('/api/time', async () => {
+    const now = new Date();
+    return {
+      currentTime: now.toISOString(),
+      timestamp: now.getTime(),
+      timezone: 'Asia/Jakarta',
     };
   });
 

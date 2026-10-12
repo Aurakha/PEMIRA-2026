@@ -96,4 +96,81 @@ export async function tallyRoutes(fastify: FastifyInstance) {
       })),
     });
   });
+
+  /**
+   * Endpoint Audit DPT: Mengambil daftar pemilih yang belum menggunakan hak suara
+   * Diadaptasi dari sistem pemira-back-end (/votes/not-voted)
+   * Berguna bagi panitia KPU untuk memonitor partisipasi atau mengirimkan reminder
+   */
+  fastify.get('/users/not-voted', async (req: FastifyRequest, reply: FastifyReply) => {
+    const election = await electionService.getActiveElection();
+    if (!election) {
+      return reply.status(404).send({ error: 'NOT_FOUND', message: 'Pemilihan tidak ditemukan.' });
+    }
+
+    const notVotedList = await query<{
+      id: string;
+      nim: string;
+      email: string;
+      full_name: string;
+      faculty: string | null;
+      study_program: string | null;
+    }>(
+      `SELECT id, nim, email, full_name, faculty, study_program
+       FROM voters
+       WHERE election_id = $1 AND has_voted = FALSE AND is_active = TRUE
+       ORDER BY study_program ASC, nim ASC`,
+      [election.id]
+    );
+
+    return reply.send({
+      success: true,
+      electionId: election.id,
+      totalNotVoted: notVotedList.length,
+      voters: notVotedList,
+    });
+  });
+
+  /**
+   * Endpoint Bulk Import DPT: Mengunggah daftar pemilih secara massal
+   * Diadaptasi dari sistem pemira-back-end (/users/create-multiple)
+   * Mendukung auto-parsing jurusan & angkatan jika hanya menyertakan email kampus
+   */
+  fastify.post('/users/bulk-import', async (req: FastifyRequest<{ Body: { emails?: string[]; voters?: any[] } }>, reply: FastifyReply) => {
+    const election = await electionService.getActiveElection();
+    if (!election) {
+      return reply.status(404).send({ error: 'NOT_FOUND', message: 'Pemilihan tidak aktif.' });
+    }
+
+    const { emails, voters } = req.body || {};
+    let importedCount = 0;
+
+    if (emails && Array.isArray(emails)) {
+      for (const email of emails) {
+        const cleanEmail = email.trim().toLowerCase();
+        if (!cleanEmail) continue;
+
+        // Gunakan auto-parser email dari referensi pemira-back-end
+        const parsed = (await import('../auth/auth.service')).parseEmailInfo(cleanEmail);
+        const name = parsed?.name || 'Mahasiswa';
+        const studyProgram = parsed?.major || 'Umum';
+        const nim = cleanEmail.split('@')[0].replace(/\D/g, '') || String(Date.now()).slice(-8);
+
+        await query(
+          `INSERT INTO voters (id, election_id, nim, email, full_name, faculty, study_program, has_voted)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, FALSE)
+           ON CONFLICT (election_id, email) DO NOTHING`,
+          [election.id, nim, cleanEmail, name, studyProgram, studyProgram]
+        );
+        importedCount++;
+      }
+    }
+
+    return reply.send({
+      success: true,
+      message: `Berhasil mengimpor ${importedCount} pemilih ke DPT.`,
+      electionId: election.id,
+    });
+  });
 }
+
